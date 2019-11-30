@@ -44,8 +44,7 @@ iControl.Systems = {
     clientID: "Xfinity-Home-iOS-App",
     clientSecret: "77b366f9a135c7ab391044234a26b1d6b1e08f66",
     clientRedirect: "xfinityhome://auth",
-    restAPI: "https://xhomeapi-lb-prod.codebig2.net/" //https://homesecurity-prod.codebig2.net/rest/
-    //https://xhomeapi-lb-prod.codebig2.net/client/
+    restAPI: "https://xhomeapi-lb-prod.codebig2.net/"
   }
 }
 
@@ -59,20 +58,10 @@ iControl.ArmState = {
 iControl.prototype.getArmState = function(callback) {
   debug.enabled = true;
   debug("Requesting current arm state..");
-
+  // API changed to get arm status and all devices, etc from one single API request while logging in.
   this._activateRestAPI(function(armState) {
     callback(null, armState);
-  }); //can start from here since all we need to know is the data from the initial request
- 
-  // this._makeAuthenticatedRequest({path: "site/:site/device/panel/:panel"}, function(err, panel) {
-  //   if (err) return callback && callback(err);
-
-  //   var armType = panel.properties.armType; // "away", "night", "stay", or null (disarmed)
-  //   var armState = armType || "disarmed";
-  //   debug("Retrieved current arm state: %s", armState);
-  //   callback(null, armState);
-
-  // }.bind(this));
+  });
 }
 
 iControl.prototype.setArmState = function(armState, callback) {
@@ -180,7 +169,7 @@ iControl.prototype.subscribeEvents = function(callback) {
    this._loginCompleteCallbacks = [];
  }
 
-iControl.prototype._beginLogin = function(callback = null) {
+iControl.prototype._beginLogin = function(callback = null) { //Callbacks bubble up so that _activateRestAPI can maintain a callback during a status request
 
   // Disabled for now - iControl's new API endpoint doesn't seem to work well
   // with access tokens that weren't generated *just now*.
@@ -192,10 +181,10 @@ iControl.prototype._beginLogin = function(callback = null) {
   // }
 
   // try to use the refresh token if we have one; skip the really slow login process
-  // if (this._refreshToken) {
-  //   this._getAccessToken(null);
-  //   return;
-  // }
+  if (this._refreshToken) {
+    this._getAccessToken(null);
+    return;
+  }
 
   var url = this.system.oauthLoginURL + "authorize";
 
