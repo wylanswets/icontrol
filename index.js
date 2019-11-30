@@ -38,11 +38,12 @@ inherits(iControl, EventEmitter);
 
 iControl.Systems = {
   XFINITY_HOME: {
-    oauthLoginURL: "https://login.comcast.net/oauth/",
+    oauthLoginURL: "https://oauth.xfinity.com/oauth/",
     clientID: "Xfinity-Home-iOS-App",
     clientSecret: "77b366f9a135c7ab391044234a26b1d6b1e08f66",
     clientRedirect: "xfinityhome://auth",
-    restAPI: "https://homesecurity-prod.codebig2.net/rest/"
+    restAPI: "https://xhomeapi-lb-prod.codebig2.net/" //https://homesecurity-prod.codebig2.net/rest/
+    //https://xhomeapi-lb-prod.codebig2.net/client/
   }
 }
 
@@ -148,7 +149,7 @@ iControl.prototype.subscribeEvents = function(callback) {
  */
 
  iControl.prototype.login = function(callback) {
-
+   debug.enabled = true;
    // queue this callback for when we're finished logging in
    if (callback)
      this._loginCompleteCallbacks.push(callback);
@@ -201,7 +202,7 @@ iControl.prototype._beginLogin = function() {
       debug('Redirected to %s', redirectURL);
 
       redirectURL = redirectURL.replace('&client_id=Xfinity-Home-iOS-App', '');
-
+      
       request(redirectURL, function (err, response, body) {
 
         if (!err && response.statusCode == 200 && response.headers['content-type'].indexOf("text/html") == 0) {
@@ -327,6 +328,7 @@ iControl.prototype._getAccessToken = function(authorizationCode) {
       }
       */
       var json = JSON.parse(body);
+      debug(json);
       this._refreshToken = json.refresh_token;
       this._accessToken = json.access_token;
       this._accessTokenExpires = json.expires_in;
@@ -359,14 +361,27 @@ iControl.prototype._getAccessToken = function(authorizationCode) {
 
 iControl.prototype._activateRestAPI = function() {
 
-  var url = this.system.restAPI + "v2/activate";
-  var form = { user_access: this._accessToken };
-  console.log('ACCESS TOKEN:', this._accessToken);
+  var url = this.system.restAPI + "client";
+  //var form = { user_access: this._accessToken };
+  //console.log('ACCESS TOKEN:', this._accessToken);
+  // debug(url);
 
-  request.post(url, {auth:{bearer:this._accessToken}, form:form}, function(err, response, body) {
+  var opts = {
+    url: url,
+    headers: {
+      'X-Client-Features': 'no-cookei,auth4all' //this is required for some reason if not there, api will return "UNAUTHORIZED / RESTRICTED user" or something
+    },
+    auth: {
+      bearer: this._accessToken
+    }
+  };
 
+  //Get request to endpoint
+  request.get(url, opts, function(err, response, body) {
     if (!err && response.statusCode == 200) {
       this._sessionToken = response.headers["x-session"];
+      
+      
 
       /* expecting a response like:
       {
@@ -375,16 +390,13 @@ iControl.prototype._activateRestAPI = function() {
       }
       */
       var json = JSON.parse(body);
-      var sites = json.siteIds;
 
-      if (sites.length != 1)
-        throw new Error(format("iControl can only handle exactly one site (%s were found)", sites.length));
-
-      this._siteID = sites[0];
+      //API seems to have changed to only return "site" as a first-class element
+      this._siteID = json.site.id;
       debug("Using site %s", this._siteID);
 
       // now we need the panel ID
-      this._findPanel();
+      this._findPanel(json);
     }
     else if (!err && (response.statusCode == 400 || response.statusCode == 401)) {
       debug("Access token expired; logging in again...");
@@ -401,49 +413,28 @@ iControl.prototype._activateRestAPI = function() {
   }.bind(this));
 }
 
-iControl.prototype._findPanel = function() {
+iControl.prototype._findPanel = function(apiJSON) {
 
-  var url = this.system.restAPI + "site/" + this._siteID + "/devices";
-  var headers = { "X-Session": this._sessionToken };
-  var qs = { access_token:this._accessToken };
+  //Since this data is in the previous (initial) request to the API, we will just use that here.
+  var devices = apiJSON.devices;
+  for (var index in devices) {
+    var device = devices[index];
+    if (device.deviceType === "panel") {
+      console.log(device);
+      this._panelID = device.instanceId;
+      debug("Using panel %s", this._panelID);
 
-  this._panelID = null;
+      // we happen to know the current arm state, so emit that
+      var armType = device.properties.armType; // "away", "night", "stay", or null (disarmed)
+      var armState = armType || "disarmed";
 
-  request(url, {auth:{bearer:this._accessToken}, headers:headers, qs:qs}, function(err, response, body) {
-    if (!err && response.statusCode == 200) {
+      debug("Current arm state is %s", armState);
+      this.emit('change', armState);
 
-      var devices = JSON.parse(body).devices; // array of devices
-      for (var index in devices) {
-        var device = devices[index];
-        if (device.deviceType === "panel") {
-
-          this._panelID = device.instanceId;
-          debug("Using panel %s", this._panelID);
-
-          // we happen to know the current arm state, so emit that
-          var armType = device.properties.armType; // "away", "night", "stay", or null (disarmed)
-          var armState = armType || "disarmed";
-
-          debug("Current arm state is %s", armState);
-          this.emit('change', armState);
-
-          break;
-        }
-      }
-
-      if (!this._panelID)
-        throw new Error("Couldn't find an alarm panel for site " + this._siteID);
-
-      // we're fully logged in now
-      this._loginComplete();
+      break;
     }
-    else {
-      err = err || new Error("Invalid status code " + response.statusCode);
-      this._notifyError(err, response, body);
-      this._loginComplete(err);
-    }
+  }
 
-  }.bind(this));
 }
 
 /**
