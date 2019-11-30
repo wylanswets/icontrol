@@ -467,8 +467,6 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
   req.headers['X-Session'] = this._sessionToken;
 
   request(req, function(err, response, body) {
-    console.log(err);
-    console.log(response);
     if (!err && response.statusCode == 200 && response.headers['content-type'].indexOf('json') != -1) {
       callback(null, JSON.parse(body));
     }
