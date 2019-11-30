@@ -56,7 +56,6 @@ iControl.ArmState = {
 }
 
 iControl.prototype.getArmState = function(callback) {
-  debug.enabled = true;
   debug("Requesting current arm state..");
   // API changed to get arm status and all devices, etc from one single API request while logging in.
   this._activateRestAPI(function(armState) {
@@ -150,7 +149,6 @@ iControl.prototype.subscribeEvents = function(callback) {
  */
 
  iControl.prototype.login = function(callback) {
-   debug.enabled = true;
    // queue this callback for when we're finished logging in
    if (callback)
      this._loginCompleteCallbacks.push(callback);
@@ -171,14 +169,12 @@ iControl.prototype.subscribeEvents = function(callback) {
 
 iControl.prototype._beginLogin = function(callback = null) { //Callbacks bubble up so that _activateRestAPI can maintain a callback during a status request
 
-  // Disabled for now - iControl's new API endpoint doesn't seem to work well
-  // with access tokens that weren't generated *just now*.
-
-  // if (this._accessToken) {
-  //   debug("Using existing access token.");
-  //   this._activateRestAPI();
-  //   return;
-  // }
+  //use existing accessToken
+  if (this._accessToken) {
+    debug("Using existing access token.");
+    this._activateRestAPI();
+    return;
+  }
 
   // try to use the refresh token if we have one; skip the really slow login process
   if (this._refreshToken) {
@@ -363,9 +359,6 @@ iControl.prototype._getAccessToken = function(authorizationCode, callback = null
 iControl.prototype._activateRestAPI = function(callback = null) {
 
   var url = this.system.restAPI + "client";
-  //var form = { user_access: this._accessToken };
-  //console.log('ACCESS TOKEN:', this._accessToken);
-  // debug(url);
 
   var opts = {
     url: url,
@@ -381,8 +374,6 @@ iControl.prototype._activateRestAPI = function(callback = null) {
   request.get(url, opts, function(err, response, body) {
     if (!err && response.statusCode == 200) {
       this._sessionToken = response.headers["x-session"];
-      
-      
 
       /* expecting a response like:
       {
