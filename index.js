@@ -32,6 +32,8 @@ function iControl(config) {
   this._refreshToken = data && data.refresh_token;
   this._accessToken = data && data.access_token;
   this._accessTokenExpires = data && data.access_token_expires;
+  this._armPath = null;
+  this._disarmPath = null;
 }
 
 inherits(iControl, EventEmitter);
@@ -55,17 +57,22 @@ iControl.ArmState = {
 }
 
 iControl.prototype.getArmState = function(callback) {
+  debug.enabled = true;
   debug("Requesting current arm state..");
 
-  this._makeAuthenticatedRequest({path: "site/:site/device/panel/:panel"}, function(err, panel) {
-    if (err) return callback && callback(err);
-
-    var armType = panel.properties.armType; // "away", "night", "stay", or null (disarmed)
-    var armState = armType || "disarmed";
-    debug("Retrieved current arm state: %s", armState);
+  this._activateRestAPI(function(armState) {
     callback(null, armState);
+  }); //can start from here since all we need to know is the data from the initial request
+ 
+  // this._makeAuthenticatedRequest({path: "site/:site/device/panel/:panel"}, function(err, panel) {
+  //   if (err) return callback && callback(err);
 
-  }.bind(this));
+  //   var armType = panel.properties.armType; // "away", "night", "stay", or null (disarmed)
+  //   var armState = armType || "disarmed";
+  //   debug("Retrieved current arm state: %s", armState);
+  //   callback(null, armState);
+
+  // }.bind(this));
 }
 
 iControl.prototype.setArmState = function(armState, callback) {
@@ -76,12 +83,17 @@ iControl.prototype.setArmState = function(armState, callback) {
     code: this.pinCode
   }
 
-  if (endpoint !== "disarm")
+  if (endpoint !== "disarm"){
     form.armType = armState;
+    form.path = this._armPath;
+  } else {
+    form.path = this._disarmPath;
+  }
+    
 
   var req = {
     method: "POST",
-    path: "site/:site/device/panel-:panel/" + endpoint,
+    path: "client/icontrol/panel/" + endpoint,
     form: form
   }
 
@@ -168,7 +180,7 @@ iControl.prototype.subscribeEvents = function(callback) {
    this._loginCompleteCallbacks = [];
  }
 
-iControl.prototype._beginLogin = function() {
+iControl.prototype._beginLogin = function(callback = null) {
 
   // Disabled for now - iControl's new API endpoint doesn't seem to work well
   // with access tokens that weren't generated *just now*.
@@ -227,7 +239,7 @@ iControl.prototype._beginLogin = function() {
             form[name] = value;
           }
 
-          this._submitLoginPage(action, form);
+          this._submitLoginPage(action, form, callback);
         }
         else {
           err = err || new Error("Invalid response code " + response.statusCode)
@@ -246,7 +258,7 @@ iControl.prototype._beginLogin = function() {
   }.bind(this));
 }
 
-iControl.prototype._submitLoginPage = function(url, form) {
+iControl.prototype._submitLoginPage = function(url, form, callback = null) {
 
   request.post(url, {form:form}, function(err, response, body) {
     // we expect a redirect response
@@ -256,7 +268,7 @@ iControl.prototype._submitLoginPage = function(url, form) {
       // library isn't decoding it correctly. Either way, @#$ IT, WE'LL DO IT LIVE
       var location = response.headers.location.replace(/&amp;/g, "&");
 
-      this._getAuthorizationCode(location);
+      this._getAuthorizationCode(location, callback);
     }
     else {
       err = err || new Error("Bad status code " + response.statusCode);
@@ -266,7 +278,7 @@ iControl.prototype._submitLoginPage = function(url, form) {
   }.bind(this));
 }
 
-iControl.prototype._getAuthorizationCode = function(url) {
+iControl.prototype._getAuthorizationCode = function(url, callback = null) {
 
   var followRedirect = function(response) {
     var isAppURL = (response.headers.location.indexOf(this.system.clientRedirect) == 0);
@@ -281,7 +293,7 @@ iControl.prototype._getAuthorizationCode = function(url) {
       var location = response.headers.location; // e.g. xfinityhome://auth?code=xyz
       var code = (/auth\?code=(.*)/).exec(location)[1];
 
-      this._getAccessToken(code);
+      this._getAccessToken(code, callback);
     }
     else {
       err = err || new Error("Invalid status code " + response.statusCode);
@@ -291,7 +303,7 @@ iControl.prototype._getAuthorizationCode = function(url) {
   }.bind(this));
 }
 
-iControl.prototype._getAccessToken = function(authorizationCode) {
+iControl.prototype._getAccessToken = function(authorizationCode, callback = null) {
 
   var url = this.system.oauthLoginURL + "token";
 
@@ -340,7 +352,7 @@ iControl.prototype._getAccessToken = function(authorizationCode) {
         refresh_token: this._refreshToken,
       });
 
-      this._activateRestAPI();
+      this._activateRestAPI(callback);
     }
     else if (!authorizationCode && !err && (response.statusCode == 400 || response.statusCode == 401)) {
 
@@ -359,7 +371,7 @@ iControl.prototype._getAccessToken = function(authorizationCode) {
   }.bind(this));
 }
 
-iControl.prototype._activateRestAPI = function() {
+iControl.prototype._activateRestAPI = function(callback = null) {
 
   var url = this.system.restAPI + "client";
   //var form = { user_access: this._accessToken };
@@ -396,7 +408,7 @@ iControl.prototype._activateRestAPI = function() {
       debug("Using site %s", this._siteID);
 
       // now we need the panel ID
-      this._findPanel(json);
+      this._findPanel(json, callback);
     }
     else if (!err && (response.statusCode == 400 || response.statusCode == 401)) {
       debug("Access token expired; logging in again...");
@@ -413,15 +425,15 @@ iControl.prototype._activateRestAPI = function() {
   }.bind(this));
 }
 
-iControl.prototype._findPanel = function(apiJSON) {
+iControl.prototype._findPanel = function(apiJSON, callback) {
 
   //Since this data is in the previous (initial) request to the API, we will just use that here.
   var devices = apiJSON.devices;
   for (var index in devices) {
     var device = devices[index];
     if (device.deviceType === "panel") {
-      console.log(device);
-      this._panelID = device.instanceId;
+      debug(device);
+      this._panelID = device.id;
       debug("Using panel %s", this._panelID);
 
       // we happen to know the current arm state, so emit that
@@ -430,10 +442,22 @@ iControl.prototype._findPanel = function(apiJSON) {
 
       debug("Current arm state is %s", armState);
       this.emit('change', armState);
+      this._armPath = device._links['panel/arm'].href;
+      this._disarmPath = device._links['panel/disarm'].href;
+
+      debug(this._armPath);
+      debug(this._disarmPath);
+
+      if(callback != null) {
+        callback(armState);
+      }
 
       break;
     }
   }
+
+  // we're fully logged in now
+  this._loginComplete();
 
 }
 
@@ -457,12 +481,14 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
     return;
   }
 
-  req.url = this.system.restAPI + req.path.replace(":site", this._siteID).replace(":panel", this._panelID);
+  req.url = this.system.restAPI + req.path;
   req.auth = {bearer:this._accessToken};
   req.headers = req.headers || {};
   req.headers['X-Session'] = this._sessionToken;
 
   request(req, function(err, response, body) {
+    console.log(err);
+    console.log(response);
     if (!err && response.statusCode == 200 && response.headers['content-type'].indexOf('json') != -1) {
       callback(null, JSON.parse(body));
     }
@@ -480,6 +506,7 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
     }
     else {
       err = err || new Error("Invalid status code " + response.statusCode);
+      
       this._notifyError(err, response, body);
       callback(err);
     }
