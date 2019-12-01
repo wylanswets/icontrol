@@ -57,22 +57,6 @@ iControl.ArmState = {
   ARMED_STAY: "stay"
 }
 
-iControl.prototype.test = function() {
-  
-  //use existing accessToken
-  if (this._accessToken && (this._nowTime < this._accessTokenExpiresAt)) {
-    console.log("Using existing access token.");
-    this._activateRestAPI();
-    return;
-  }
-  else if (this._refreshToken) { // try to use the refresh token if we have one; skip the really slow login process
-    console.log("Getting new access token with refresh token.");
-    this._getAccessToken(null);
-    return;
-  }
-
-}
-
 iControl.prototype.getArmState = function(callback) {
   debug("Requesting current arm state..");
   // API changed to get arm status and all devices, etc from one single API request while logging in.
@@ -317,12 +301,12 @@ iControl.prototype._getAccessToken = function(authorizationCode, callback = null
 
   // use a authorizationCode if given, otherwise use our refresh token
   if (authorizationCode) {
-    console.log("Logging in with authorization code from web form...");
+    debug("Logging in with authorization code from web form...");
     form.code = authorizationCode;
     form.grant_type = "authorization_code";
   }
   else {
-    console.log("Logging in with previously stored refresh token...");
+    debug("Logging in with previously stored refresh token...");
     form.refresh_token = this._refreshToken;
     form.grant_type = "refresh_token";
   }
