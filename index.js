@@ -26,12 +26,14 @@ function iControl(config) {
   this._loggingIn = false;
 
   storage.initSync();
-
+  var now = new Date();
   // try to load the refresh token if we have one stored from a previous session
   var data = storage.getItem("iControl." + this.email + ".json");
   this._refreshToken = data && data.refresh_token;
   this._accessToken = data && data.access_token;
   this._accessTokenExpires = data && data.access_token_expires;
+  this._accessTokenExpiresAt = data && data.access_token_expires_at;
+  this._nowTime = now.getTime();
   this._armPath = null;
   this._disarmPath = null;
 }
@@ -53,6 +55,22 @@ iControl.ArmState = {
   ARMED_AWAY: "away",
   ARMED_NIGHT: "night",
   ARMED_STAY: "stay"
+}
+
+iControl.prototype.test = function() {
+  
+  //use existing accessToken
+  if (this._accessToken && (this._nowTime < this._accessTokenExpiresAt)) {
+    console.log("Using existing access token.");
+    this._activateRestAPI();
+    return;
+  }
+  else if (this._refreshToken) { // try to use the refresh token if we have one; skip the really slow login process
+    console.log("Getting new access token with refresh token.");
+    this._getAccessToken(null);
+    return;
+  }
+
 }
 
 iControl.prototype.getArmState = function(callback) {
@@ -170,14 +188,13 @@ iControl.prototype.subscribeEvents = function(callback) {
 iControl.prototype._beginLogin = function(callback = null) { //Callbacks bubble up so that _activateRestAPI can maintain a callback during a status request
 
   //use existing accessToken
-  if (this._accessToken) {
+  if (this._accessToken && (this._nowTime < this._accessTokenExpiresAt)) {
     debug("Using existing access token.");
     this._activateRestAPI();
     return;
   }
-
-  // try to use the refresh token if we have one; skip the really slow login process
-  if (this._refreshToken) {
+  else if (this._refreshToken) { // try to use the refresh token if we have one; skip the really slow login process
+    debug("Getting new access token with refresh token.");
     this._getAccessToken(null);
     return;
   }
@@ -300,12 +317,12 @@ iControl.prototype._getAccessToken = function(authorizationCode, callback = null
 
   // use a authorizationCode if given, otherwise use our refresh token
   if (authorizationCode) {
-    debug("Logging in with authorization code from web form...");
+    console.log("Logging in with authorization code from web form...");
     form.code = authorizationCode;
     form.grant_type = "authorization_code";
   }
   else {
-    debug("Logging in with previously stored refresh token...");
+    console.log("Logging in with previously stored refresh token...");
     form.refresh_token = this._refreshToken;
     form.grant_type = "refresh_token";
   }
@@ -324,16 +341,21 @@ iControl.prototype._getAccessToken = function(authorizationCode, callback = null
       	"id_token": "eyJhbGciO..."
       }
       */
+      
       var json = JSON.parse(body);
+      var curDate = new Date();
+      var expiresDate = new Date(curDate.getTime() + (1000 * json.expires_in));
       debug(json);
       this._refreshToken = json.refresh_token;
       this._accessToken = json.access_token;
       this._accessTokenExpires = json.expires_in;
+      this._accessTokenExpiresAt = expiresDate.getTime();
 
       // save tokens in local storage
       storage.setItem("iControl." + this.email + ".json", {
         access_token: this._accessToken,
         access_token_expires: this._accessTokenExpires,
+        access_token_expires_at: this._accessTokenExpiresAt,
         refresh_token: this._refreshToken,
       });
 
@@ -459,6 +481,15 @@ iControl.prototype._makeAuthenticatedRequest = function(req, callback) {
     }.bind(this));
 
     return;
+  }
+
+  // check if token is expired and auto-start login process before bothering to try below request
+  // we will likely have a refresh token on hand so this should be fast.
+  if(this._nowTime >= this._accessTokenExpiresAt) {
+    this.login(function(err) {
+      if (err) return callback(err);
+      this._makeAuthenticatedRequest(req, callback); // login successful - try again!
+    }.bind(this));
   }
 
   req.url = this.system.restAPI + req.path;
