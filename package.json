@@ -1,10 +1,10 @@
 {
-  "name": "wylanswets-icontrol",
+  "name": "node-icontrol",
   "description": "NodeJS module for controlling an iControl security system (like Xfinity Home)",
-  "version": "0.2.5",
+  "version": "0.2.2",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/wylanswets/icontrol.git"
+    "url": "git@github.com:nfarina/icontrol.git"
   },
   "license": "MIT",
   "dependencies": {
@@ -12,17 +12,5 @@
     "node-persist": "0.0.x",
     "request": "^2.81.0",
     "ws": "^0.8.0"
-  },
-  "bugs": {
-    "url": "https://github.com/wylanswets/icontrol/issues"
-  },
-  "homepage": "https://github.com/nfarina/icontrol#readme",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [
-    "homebridge"
-  ],
-  "author": "Wylan Swets"
+  }
 }
